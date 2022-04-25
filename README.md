@@ -52,3 +52,6 @@ Zivid part comes from the Examples Supplied by the Zivid Company and modifying t
 
 *******************Robot*******************
 Yaskawa code was made using Motoplus C library.
+
+*******************Communication*******************
+Socket Communication was implemented between PC and Yaskawa Robot in C++ programming language .
