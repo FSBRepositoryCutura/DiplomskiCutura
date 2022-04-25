@@ -1,0 +1,663 @@
+
+#include "motoPlus.h"
+
+// for API & FUNCTIONS
+void moto_plus0_task(void);
+
+STATUS ap_TCP_Sserver(ULONG portNo, char *commandPC, int switchCom);
+void ExecuteJobs(char* JobsName);
+void MoveRobotL(int targetNo, int CoordinateSystemU);
+void MoveHome();
+void MoveLV2(double px, double py, double pz, double rx, double ry, double rz);
+void FileControls(void);
+STATUS ConvertToEuler(double* PosVals2, MP_COORD* UsedSystem);
+
+#define PORT        11000
+#define BUFF_MAX    1023
+
+// for GLOBAL DATA DEFINITIONS
+SEM_ID semid;
+
+MP_COORD CordSys;
+// for IMPORT API & FUNCTIONS
+
+
+// for LOCAL DEFINITIONS
+static int tid1;
+STATUS Extractor(char* InputString, double* PosVals1, int StartPoint);
+char    command2[BUFF_MAX + 1];
+char *strupr(char *string);
+void command_modify(char *string, char *order);
+STATUS SetIO(UINT32 ioAddr, USHORT signal);
+STATUS GetIO(UINT32 ioAddr, USHORT *signal);
+int delayS;
+int delayL;
+int PositionAcquired = 0;
+STATUS RobotPoseCalculated = 1;
+STATUS TransferStatus;
+STATUS ActionStatus = 1;
+STATUS SendPose(UINT32 ioAddr);
+STATUS SendPose2(UINT32 ioAddr);
+STATUS CreatePose(UINT32 ioAddr);
+STATUS CreatePoseAuto();
+USHORT signal = 0;
+double PosVals[12];
+
+void mpUsrRoot(int arg1, int arg2, int arg3, int arg4, int arg5,
+	int arg6, int arg7, int arg8, int arg9, int arg10)
+{
+	tid1 = mpCreateTask(MP_PRI_TIME_NORMAL, MP_STACK_SIZE, (FUNCPTR)moto_plus0_task,
+		arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10);
+	semid = mpSemBCreate(SEM_Q_FIFO, SEM_EMPTY);
+	puts("Exit mpUsrRoot!");
+	mpExitUsrRoot;	//(or) mpSuspendSelf;
+}
+// glavna petlja
+void moto_plus0_task(void)
+{
+	char    command[BUFF_MAX + 1];
+
+
+	//strcpy(command, "DEFAULT");
+	puts("***----------------***");
+	puts("Motoplus Task Activated\n");
+	int delayS = 1 / mpGetRtc();
+	int delaySM = 10 / mpGetRtc();
+	int delayL = 1000 / mpGetRtc();
+	int delayEL = 10000 / mpGetRtc();
+
+
+	while (1)
+	{
+		ExitComLoop:
+		mpTaskDelay(delaySM);
+		GetIO(10045, &signal);
+		ActionStatus = signal;
+		signal = 0;
+		if (ActionStatus == 1)
+		{
+			SetIO(10045, 0);
+			// Action status, signal 10045
+			ActionStatus = 0;
+
+			while (1)
+			{
+				mpTaskDelay(delayL);
+				GetIO(10050, &signal);
+				// Escape Loop,signal 10050
+				if (signal == 1)
+				{
+					ActionStatus = 0;
+					signal = 0;
+					TransferStatus = 0;
+					SetIO(10050, 0);
+					goto ExitComLoop;
+				}
+				TransferStatus = 0;
+				ap_TCP_Sserver(23000, "POS_TRANSFER_", 1);
+				if (TransferStatus == 1)
+				{
+					TransferStatus = 0;
+					RobotPoseCalculated = CreatePoseAuto();
+					if (RobotPoseCalculated == 0)
+					{
+						RobotPoseCalculated = -1;
+						SetIO(10040, 1);
+					}
+					break;
+				}
+			}
+
+
+		}
+		//SendPose salje poziciju 500 na TELNET u obliku matrice homogenih transformacija
+		SendPose(10030);
+		CreatePose(10035);
+	}
+
+
+}
+
+//Funkcija za komunikaciju s racunalom, robot ima ulogu servera
+STATUS ap_TCP_Sserver(ULONG portNo, char *commandPC, int switchCom)
+{
+	//ako je switch 0, onda robot salje, ako je 1 onda robot prima
+	int     sockHandle;
+	struct  sockaddr_in     serverSockAddr;
+	int     rc;
+
+	puts("***----------------***");
+	printf("TCP Server\n");
+
+	sockHandle = mpSocket(AF_INET, SOCK_STREAM, 0);
+	if (sockHandle < 0)
+		return(-1);
+
+	memset(&serverSockAddr, 0, sizeof(serverSockAddr));
+	serverSockAddr.sin_family = AF_INET;
+	serverSockAddr.sin_addr.s_addr = INADDR_ANY;
+	serverSockAddr.sin_port = mpHtons(portNo);
+
+	rc = mpBind(sockHandle, (struct sockaddr *)&serverSockAddr, sizeof(serverSockAddr));
+	if (rc < 0)
+		goto closeSockHandle;
+
+	rc = mpListen(sockHandle, SOMAXCONN);
+	if (rc < 0)
+		goto closeSockHandle;
+	puts("***----------------***\n");
+	printf("Socket Created\n");
+	while (1)
+	{
+		int     acceptHandle;
+		struct  sockaddr_in     clientSockAddr;
+		int     sizeofSockAddr;
+
+		memset(&clientSockAddr, 0, sizeof(clientSockAddr));
+		sizeofSockAddr = sizeof(clientSockAddr);
+
+		acceptHandle = mpAccept(sockHandle, (struct sockaddr *)&clientSockAddr, &sizeofSockAddr);
+		puts("***----------------***\n");
+		printf("Connection Accepted\n");
+
+
+		if (acceptHandle < 0)
+		{
+			puts("***----------------***\n");
+			printf("Socket mpAccept Error\n");
+			break;
+		}
+
+		while (1)
+		{
+			int     bytesRecv;
+			int     bytesSend;
+			char    buff[BUFF_MAX + 1];
+
+			mpTaskDelay(delayL);
+			puts("***----------------***\n");
+			printf("Communicating..\n");
+
+			memset(buff, 0, sizeof(buff));
+
+			if (switchCom == 0)
+			{
+				memset(buff, 0, sizeof(buff));
+				strcpy(buff, commandPC);
+
+				bytesSend = mpSend(acceptHandle, buff, BUFF_MAX, 0);
+				if (bytesSend < 0)
+				{
+					printf("Data Not sent");
+					break;
+				}
+				if (bytesSend>0)
+				{
+					printf("Data sent");
+					mpClose(acceptHandle);
+					mpClose(sockHandle);
+					return(1);
+				}
+
+			}
+			else  if (switchCom == 1)
+			{
+				memset(buff, 0, sizeof(buff));
+				bytesRecv = mpRecv(acceptHandle, buff, BUFF_MAX, 0);
+
+				if (strncmp(buff, "POS_TRANSFER_", 13) == 0)
+				{
+					puts("***----------------***\n");
+					printf("Acquired string is:\n %s \n", buff);
+					//bytesSend = mpSend(acceptHandle, buff, BUFF_MAX, 0);
+					TransferStatus = Extractor(buff, PosVals, strlen("POS_TRANSFER_"));
+					memset(buff, 0, sizeof(buff));
+					if (TransferStatus == 1)
+					{
+						puts("***----------------***\n");
+						printf("Position Acquired\n");
+					}
+					else if (TransferStatus != 1)
+					{
+						puts("***----------------***\n");
+						printf("Position Acquisition Error\n");
+
+					}
+
+					mpClose(acceptHandle);
+					mpClose(sockHandle);
+					return(0);
+				}
+
+				else
+				{
+					puts("***----------------***\n");
+					printf("\nFault Input\n");
+					mpClose(acceptHandle);
+					goto closeSockHandle;
+
+				}
+			}
+
+		}
+		mpClose(acceptHandle);
+	}
+closeSockHandle:
+	mpClose(sockHandle);
+	return(-1);
+}
+
+char *strupr(char *string)
+{
+	int		i;
+	int     len;
+
+	len = strlen(string);
+	for (i = 0; i < len; i++)
+	{
+		if (isalpha((unsigned char)string[i]))
+		{
+			string[i] = toupper(string[i]);
+		}
+	}
+	return (string);
+}
+void command_modify(char *string, char *order)
+{
+	//memset(string, 0, sizeof(string));
+	strcpy(string, order);
+
+}
+//Funkcija za setiranje I/0 signala
+STATUS SetIO(UINT32 ioAddr, USHORT signal)
+{
+	MP_IO_DATA dta;
+	dta.ulAddr = ioAddr;
+	dta.ulValue = signal;
+	return mpWriteIO(&dta, 1);
+}
+//Funkcija za citanjeI/0 signala
+STATUS GetIO(UINT32 ioAddr, USHORT *signal)
+{
+	MP_IO_INFO nfo;
+	nfo.ulAddr = ioAddr;
+	return mpReadIO(&nfo, signal, 1);
+}
+void ExecuteJobs(char* JobsName)
+{
+	MP_START_JOB_SEND_DATA sData;
+	MP_WAIT_JOB_SEND_DATA sDataW;
+	MP_STD_RSP_DATA rData;
+	sData.sTaskNo = 10;
+
+	strcpy(sData.cJobName, JobsName);
+	mpStartJob(&sData, &rData);
+	mpWaitForJobEnd(&sDataW, &rData);
+}
+// Funkcija za ekstrakciju podataka iz string-a
+STATUS Extractor(char* InputString, double* PosVals1, int StartPoint)
+{
+	//char* RefPointer = InputString;
+	InputString = InputString + StartPoint;
+	char SaveString[250];
+	strcpy(SaveString, "");
+	const char s[2] = ",";
+	char* token;
+	char* endptr;
+
+	int i = 0;
+
+	token = strtok(InputString, ",");
+	while (token != NULL && i < 12) {
+		strncat(SaveString, InputString, token - InputString);
+		//printf(" %s \n", token);
+		strcpy(SaveString, "");
+		PosVals1[i] = strtod(token, &endptr);
+		token = strtok(NULL, s);
+		i++;
+	}
+	if (i < 11)
+	{
+		printf("Error with sent string, wrong number of members, 12 required\n");
+		return(-1);
+	}
+	printf("Members of transformation matrix are(in order:nx,ox,ax,ox,ny,oy,ay,py,nz,oz,az,pz):\n", PosVals1[i]);
+	for (i = 0; i < 12; i++)
+	{
+		printf("-->%f\n", PosVals1[i]);
+	}
+	return(1);
+}
+//Funkcija za konverziju u pozicijsku varijablu
+STATUS ConvertToEuler(double* PosVals2, MP_COORD* UsedSystem)
+{
+	STATUS info;
+	MP_FRAME TempFrame;
+	TempFrame.nx = PosVals2[0];
+	TempFrame.ox = PosVals2[1];
+	TempFrame.ax = PosVals2[2];
+	TempFrame.px = PosVals2[3];
+	TempFrame.ny = PosVals2[4];
+	TempFrame.oy = PosVals2[5];
+	TempFrame.ay = PosVals2[6];
+	TempFrame.py = PosVals2[7];
+	TempFrame.nz = PosVals2[8];
+	TempFrame.oz = PosVals2[9];
+	TempFrame.az = PosVals2[10];
+	TempFrame.pz = PosVals2[11];
+
+
+	info = mpFrameToZYXeuler(&TempFrame, UsedSystem);
+
+
+	if (info == 0)
+	{
+		printf("X = %ld", UsedSystem->x);
+		printf("X = %ld", UsedSystem->y);
+		printf("X = %ld", UsedSystem->z);
+		printf("X = %ld", UsedSystem->rx);
+		printf("X = %ld", UsedSystem->ry);
+		printf("X = %ld", UsedSystem->rz);
+		printf("X = %ld", UsedSystem->ex1);
+		return(0);
+	}
+	else
+	{
+		return(-1);
+	}
+}
+// Funkcija za konverziju u matricu homogenih transformacija
+STATUS ConvertToHTM(MP_COORD* coordFrom, MP_FRAME* frameTo)
+{
+	mpZYXeulerToFrame(coordFrom, frameTo);
+	printf("\n Calibration Format");
+	printf("\n****************************\n");
+	printf("\n");
+	printf("%f", frameTo->nx);
+	printf(" ");
+	printf("%f", frameTo->ox);
+	printf(" ");
+	printf("%f", frameTo->ax);
+	printf(" ");
+	printf("%f", (frameTo->px)*0.001);
+	printf(" ");
+	printf("%f", frameTo->ny);
+	printf(" ");
+	printf("%f", frameTo->oy);
+	printf(" ");
+	printf("%f", frameTo->ay);
+	printf(" ");
+	printf("%f", (frameTo->py)*0.001);
+	printf(" ");
+	printf("%f", frameTo->nz);
+	printf(" ");
+	printf("%f", frameTo->oz);
+	printf(" ");
+	printf("%f", frameTo->az);
+	printf(" ");
+	printf("%f", (frameTo->pz)*0.001);
+	printf(" ");
+	printf("%f", 0.0);
+	printf(" ");
+	printf("%f", 0.0);
+	printf(" ");
+	printf("%f", 0.0);
+	printf(" ");
+	printf("%f", 1.0);
+	printf("\n");
+	printf("****************************\n");
+	return 0;
+}
+//Funkcija za stvaranje pozicijske varijable
+STATUS CreatePose(UINT32 ioAddr)
+{
+	//ucitavanje
+	MP_USR_VAR_INFO PoseInfo;
+	int resp;
+	int i;
+	double PosValsM[12];
+
+	MP_IO_INFO dta;
+	//LONG num;
+	USHORT rSignalInfo;
+	dta.ulAddr = ioAddr;
+
+	resp = mpReadIO(&dta, &rSignalInfo, 1);
+
+	PoseInfo.var_type = MP_VAR_R;
+
+	if (rSignalInfo == 1)
+	{
+		puts("***----------------***\n");
+		printf("Manual Pose Creation-transformation matrix to position variable\n");
+		SetIO(dta.ulAddr, 0);
+		mpTaskDelay(delayL);
+		printf("Members of transformation matrix are inputed in order:\n");
+		printf("NX,OX,AX,PX,NY,OY,AY,PY,NZ,OZ,AZ,PZ");
+		for (i = 0; i <= 11; i++)
+		{
+			PoseInfo.var_no = i;
+			resp = mpGetUserVars(&PoseInfo);
+			
+			PosValsM[i] = PoseInfo.val.r;
+			if (resp == 0)
+			{
+				printf("Parameter Value = %f \n", PosVals[i]);
+			}
+			else
+			{
+				printf("Error with reading variables\n");
+			}
+		}
+		//upisivanje pozicije
+		MP_USR_VAR_INFO PoseInfoGet;
+		PoseInfoGet.var_type = MP_VAR_P;
+		PoseInfoGet.var_no = 500;
+
+		MP_USR_VAR_INFO PoseInfoGet1;
+		PoseInfoGet1.var_type = MP_VAR_P;
+		PoseInfoGet1.var_no = 99;
+
+		MP_USR_VAR_INFO PoseInfoPut;
+		PoseInfoPut.var_type = MP_VAR_P;
+		PoseInfoPut.var_no = 501;
+
+		MP_COORD ToCoord;
+		resp = mpGetUserVars(&PoseInfoGet);
+
+		if (resp == 0)
+		{
+			puts("***----------------***\n");
+			printf("Position Variable Acquired from position register\n");
+		}
+		else
+		{
+			puts("***----------------***\n");
+			printf("Error with position register acquisition\n");
+			return(1);
+		}
+		PoseInfoPut.val.p.dtype = PoseInfoGet.val.p.dtype;
+		PoseInfoPut.val.p.fig_ctrl = PoseInfoGet.val.p.fig_ctrl;
+		PoseInfoPut.val.p.tool_no = PoseInfoGet.val.p.tool_no;
+		PoseInfoPut.val.p.uf_no = PoseInfoGet.val.p.uf_no;
+
+
+		resp = ConvertToEuler(PosValsM, &ToCoord);
+		if (resp == 0)
+		{
+			puts("***----------------***\n");
+			printf("Succesfully converted to Euler Representation\n");
+		}
+		else
+		{
+			puts("***----------------***\n");
+			printf("Unsuccesfull Euler Conversion of transformation matrix\n");
+			return(1);
+		}
+
+		PoseInfoPut.val.p.data[0] = ToCoord.x;
+		PoseInfoPut.val.p.data[1] = ToCoord.y;
+		PoseInfoPut.val.p.data[2] = ToCoord.z;
+		PoseInfoPut.val.p.data[3] = ToCoord.rx;
+		PoseInfoPut.val.p.data[4] = ToCoord.ry;
+		PoseInfoPut.val.p.data[5] = ToCoord.rz;
+		PoseInfoPut.val.p.data[6] = ToCoord.ex1;
+
+
+		resp = mpPutUserVars(&PoseInfoPut);
+		if (resp == 0)
+		{
+			puts("***----------------***\n");
+			printf("Succesfully saved point to position register\n");
+			return(0);
+		}
+		else
+		{
+			puts("***----------------***\n");
+			printf("Error with saving to position register\n");
+			return(-1);
+		}
+	}
+
+	return (1);
+
+}
+// Funkcija za stvaranje pozicijske varijable
+STATUS CreatePoseAuto()
+{
+	//ucitavanje
+
+	int resp;
+
+
+	//upisivanje pozicije
+	MP_USR_VAR_INFO PoseInfoGet;
+	PoseInfoGet.var_type = MP_VAR_P;
+	PoseInfoGet.var_no = 500;
+
+
+	MP_USR_VAR_INFO PoseInfoPut;
+	PoseInfoPut.var_type = MP_VAR_P;
+	PoseInfoPut.var_no = 511;
+
+	MP_COORD ToCoord;
+	resp = mpGetUserVars(&PoseInfoGet);
+
+	if (resp == 0)
+	{
+		puts("***----------------***\n");
+		printf("Position Variable Acquired from position register\n");
+	}
+	else
+	{
+		puts("***----------------***\n");
+		printf("Error with position register acquisition\n");
+		return(1);
+	}
+
+	PoseInfoPut.val.p.dtype = PoseInfoGet.val.p.dtype;
+	PoseInfoPut.val.p.fig_ctrl = PoseInfoGet.val.p.fig_ctrl;
+	PoseInfoPut.val.p.tool_no = PoseInfoGet.val.p.tool_no;
+	PoseInfoPut.val.p.uf_no = PoseInfoGet.val.p.uf_no;
+
+
+	resp = ConvertToEuler(PosVals, &ToCoord);
+	if (resp == 0)
+	{
+		puts("***----------------***\n");
+		printf("Succesfully converted to Euler Representation\n");
+	}
+	else
+	{
+		puts("***----------------***\n");
+		printf("Unsuccesfull Euler Conversion of transformation matrix\n");
+		return(1);
+	}
+
+
+	PoseInfoPut.val.p.data[0] = ToCoord.x;
+	PoseInfoPut.val.p.data[1] = ToCoord.y;
+	PoseInfoPut.val.p.data[2] = ToCoord.z;
+	PoseInfoPut.val.p.data[3] = ToCoord.rx;
+	PoseInfoPut.val.p.data[4] = ToCoord.ry;
+	PoseInfoPut.val.p.data[5] = ToCoord.rz;
+	PoseInfoPut.val.p.data[6] = 0;
+
+
+	resp = mpPutUserVars(&PoseInfoPut);
+	if (resp == 0)
+	{
+		puts("***----------------***\n");
+		printf("Succesfully saved point to position register\n");
+		return(0);
+	}
+	else
+	{
+		puts("***----------------***\n");
+		printf("Error with saving to position register\n");
+		return(-1);
+	}
+
+
+}
+//Funkcija za slanje matrice homogenih transformacija na PC
+STATUS SendPose(UINT32 ioAddr)
+{
+	MP_IO_INFO dta;
+	//LONG num;
+	USHORT rSignalInfo;
+	MP_USR_VAR_INFO PoseInfo;
+	MP_COORD FromCoord;
+	MP_FRAME ToFrame;
+
+
+
+	LONG resp1;
+	dta.ulAddr = ioAddr;
+
+
+	resp1 = mpReadIO(&dta, &rSignalInfo, 1);
+
+	if (rSignalInfo == 1)
+	{
+		puts("***----------------***\n");
+		SetIO(dta.ulAddr, 0);
+		mpTaskDelay(delayL);
+		PoseInfo.var_type = MP_VAR_P;
+		PoseInfo.var_no = 500;
+
+
+		resp1 = mpGetUserVars(&PoseInfo);
+
+		if (resp1 == 0)
+
+		{
+
+			puts("***----------------***\n");
+			puts("Converting position variable to transformation matrix representation\n");
+			printf("\n Tocka X=%ld,Y=%ld,Z=%ld,RX=%ld,RY=%ld,RZ=%ld,RE=%ld", PoseInfo.val.p.data[0], PoseInfo.val.p.data[1], PoseInfo.val.p.data[2], PoseInfo.val.p.data[3], PoseInfo.val.p.data[4], PoseInfo.val.p.data[5], PoseInfo.val.p.data[6]);
+
+			FromCoord.x = PoseInfo.val.p.data[0];
+			FromCoord.y = PoseInfo.val.p.data[1];
+			FromCoord.z = PoseInfo.val.p.data[2];
+
+			FromCoord.rx = PoseInfo.val.p.data[3];
+			FromCoord.ry = PoseInfo.val.p.data[4];
+			FromCoord.rz = PoseInfo.val.p.data[5];
+
+			FromCoord.ex1 = PoseInfo.val.p.data[6];
+			resp1 = ConvertToHTM(&FromCoord, &ToFrame);
+			if (resp1 == 0)
+			{
+				printf("Conversion Successfull\n");
+			}
+		}
+		else
+		{
+			printf("Error with Conversion of position register");
+		}
+	}
+	return 0;
+}
+
+

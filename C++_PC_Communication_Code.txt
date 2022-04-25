@@ -1,0 +1,403 @@
+#include <WS2tcpip.h>
+#include <iostream>
+#include <string>
+#include <windows.h>
+#include <winsock.h>
+#define PORT 22200
+
+using namespace std;
+#pragma comment(lib, "ws2_32.lib")
+// constexpr int PORT 2200;
+const int BUFF_SIZE = 1023;
+const DWORD ConnectionRate = 100;
+
+void TCPServer();
+void TCPClient(std::string userInput);
+std::string DataParser(double nx,
+                       double ny,
+                       double nz,
+                       double ox,
+                       double oy,
+                       double oz,
+                       double kx,
+                       double ky,
+                       double kz,
+                       double px,
+                       double py,
+                       double pz);
+int TCPClientReceive();
+    // struct sockaddr_in
+//{
+//    short sin_family;
+//    u_short sin_port;
+//    struct in_addr sin_addr;
+//    char sin_zero[8];
+//};
+
+// int main()
+//{
+//    TCPClient(DataParser(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12));
+//    return 0;
+//}
+
+void TCPServer()
+{
+    // init winsock
+    WSADATA wsData;
+    WORD ver = MAKEWORD(2, 2);
+
+    int wsOk = WSAStartup(ver, &wsData);
+    if(wsOk != 0)
+    {
+        cerr << "cant init winsock" << endl;
+        return;
+    }
+    // Create socket
+    SOCKET listening = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(listening == INVALID_SOCKET)
+    {
+        cerr << "Cant create socket" << endl;
+        return;
+    }
+
+    // Bind the socket to an ip address and port
+    sockaddr_in hint;
+    hint.sin_family = AF_INET;
+    hint.sin_port = htons(23000);
+    hint.sin_addr.S_un.S_addr = INADDR_ANY;
+
+    bind(listening, (sockaddr *)&hint, sizeof(hint));
+
+    // tell winsock socket is for listening
+    listen(listening, SOMAXCONN);
+
+    // wait for connection
+    sockaddr_in client;
+    int clientSize = sizeof(client);
+
+    SOCKET clientSocket = accept(listening, (sockaddr *)&client, &clientSize);
+    if(clientSocket == INVALID_SOCKET)
+    {
+        cerr << "invalid socket" << endl;
+        return;
+    }
+    char host[NI_MAXHOST];    // Client remote name
+    char service[NI_MAXHOST]; // port the client is connected on
+
+    ZeroMemory(host, NI_MAXHOST);
+    ZeroMemory(service, NI_MAXHOST);
+
+    if(getnameinfo((sockaddr *)&client, sizeof(client), host, NI_MAXHOST, service, NI_MAXSERV, 0) == 0)
+    {
+        cout << host << "connected on port" << service << endl;
+    }
+    else
+    {
+        inet_ntop(AF_INET, &client.sin_addr, host, NI_MAXHOST);
+        cout << host << "connected on port" << ntohs(client.sin_port) << endl;
+    }
+
+    // close listening socket
+    closesocket(listening);
+    // while loop:accept and echo message back to client
+    char buf[4096];
+
+    while(true)
+    {
+        ZeroMemory(buf, 4096);
+        // Wait for client to send data
+        int bytesReceived = recv(clientSocket, buf, 4096, 0);
+        if(bytesReceived == SOCKET_ERROR)
+        {
+            cerr << "Error in recv(). quitting" << endl;
+            break;
+        }
+        if(bytesReceived == 0)
+        {
+            cerr << "clientdisc" << endl;
+            break;
+        }
+
+        // Echo message back to client
+        send(clientSocket, buf, bytesReceived + 1, 0);
+    }
+    // Close the socket
+    closesocket(clientSocket);
+
+    WSACleanup();
+    // shutdown winsock
+}
+void TCPClient(std::string userInput)
+{
+    while(1)
+    {
+        string ipAddress = "10.0.0.2"; // ip server
+        int port = 23000;               // listening port serv
+        // init winsock
+        WSADATA data;
+        WORD ver = MAKEWORD(2, 2);
+
+        int wsResult = WSAStartup(ver, &data);
+
+        if(wsResult != 0)
+        {
+            cerr << "cant start winsock " << wsResult << endl;
+            WSACleanup();
+            return;
+        }
+
+        // socket create
+        SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+        if(sock == INVALID_SOCKET)
+        {
+            cerr << endl << "Cant create socket";
+            WSACleanup();
+            return;
+        }
+
+        sockaddr_in hint;
+        hint.sin_family = AF_INET;
+        hint.sin_port = htons(port);
+        inet_pton(AF_INET, ipAddress.c_str(), &hint.sin_addr);
+        int e = 0;
+        // connect to server
+        while(1)
+        {
+  
+            try
+            {
+                int connResult = connect(sock, (sockaddr *)&hint, sizeof(hint));
+                Sleep(ConnectionRate);
+                if(connResult == SOCKET_ERROR)
+                {
+                    throw 00;
+          
+                }
+                else
+                {
+                    cout << "Connected to server!" << endl;
+                    break;
+                }
+            }
+            catch(int errnum)
+            {
+                cerr << "cant connect to server Error:" << WSAGetLastError() << endl;
+                Sleep(ConnectionRate);
+                continue;
+            }
+        }
+
+        bool tries = false;
+        // for()ž
+        int k = 0;
+
+        while(1)
+        {
+
+            char buf[BUFF_SIZE + 1];
+            ZeroMemory(buf, BUFF_SIZE + 1);
+            if(userInput.length() > (BUFF_SIZE + 1))
+            {
+                cerr << endl << "Input String is too large" << endl;
+                break;
+            }
+            else
+            {
+                strcpy(buf, userInput.c_str());
+            }
+         
+            int sendResult = send(sock, buf, strlen(buf) + 1, 0);
+            if(sendResult != SOCKET_ERROR && sendResult == 0)
+            {
+                cout << endl << "Retry sending data" << endl;
+                continue;
+            }
+            else if(sendResult == userInput.length()+1)
+            {
+                std::cout << "*----------------*" << std::endl;
+                cout << endl << "Data sent" << endl;
+                break;
+            }
+            else if(sendResult == 0)
+            {
+                cout << endl << "Connection Closed" << endl;
+                closesocket(sock);
+                WSACleanup();
+                return;
+                break;
+            }
+            else if(sendResult == SOCKET_ERROR)
+            {
+                cerr << endl << "Robot Communication Error" << endl;
+
+                break;
+            }
+        }
+
+        closesocket(sock);
+        WSACleanup();
+        return;
+    }
+}
+int TCPClientReceive()
+{
+    while(1)
+    {
+        string ipAddress = "10.0.0.2"; // ip server
+        int port = 23000;               // listening port serv
+        // init winsock
+        WSADATA data;
+        WORD ver = MAKEWORD(2, 2);
+
+        int wsResult = WSAStartup(ver, &data);
+
+        if(wsResult != 0)
+        {
+            cerr << "cant start winsock " << wsResult << endl;
+            WSACleanup();
+            return (-1);
+        }
+
+        // socket create
+        SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+        if(sock == INVALID_SOCKET)
+        {
+            cerr << endl << "Cant create socket";
+            WSACleanup();
+            return(-1);
+        }
+
+        sockaddr_in hint;
+        hint.sin_family = AF_INET;
+        hint.sin_port = htons(port);
+        inet_pton(AF_INET, ipAddress.c_str(), &hint.sin_addr);
+        int e = 0;
+        bool tries = false;
+        // for()ž
+        int k = 0;
+        // connect to server
+        while(1)
+        {
+         /*   e++;
+            if(e > 10)
+            {
+                e = 0;
+                cout << endl << "Connection Timeout" << endl;
+                closesocket(sock);
+                WSACleanup();
+                return (-1);
+            }*/
+            try
+            {
+                int connResult = connect(sock, (sockaddr *)&hint, sizeof(hint));
+                Sleep(ConnectionRate);
+                if(connResult == SOCKET_ERROR)
+                {
+                    throw 00;
+                    // closesocket(sock);
+                    // WSACleanup;
+                    // return;
+                }
+                else
+                {
+                    cout << "Connected to server!" << endl;
+                    break;
+                }
+            }
+            catch(int errnum)
+            {
+                cerr << "cant connect to server Error:" << WSAGetLastError() << endl;
+                Sleep(ConnectionRate);
+                continue;
+            }
+        }
+
+     
+
+        while(1)
+        {
+       /*     k++;
+            if (k > 10)
+            {
+                k = 0;
+                cout<<endl << "Connection Timeout" << endl;
+                closesocket(sock);
+                WSACleanup();
+                return(-1);
+            }*/
+            char buf[BUFF_SIZE + 1];
+            ZeroMemory(buf, BUFF_SIZE + 1);
+
+            // wait response
+            ZeroMemory(buf, BUFF_SIZE + 1);
+            int bytesReceived = recv(sock, buf, 1023, 0);
+            cout << endl << "recv finished" << endl;
+            if(std::string(buf, 0, bytesReceived).find("REQUEST_POS") != string::npos
+               or strncmp(buf, "REQUEST_POS", 11) == 0)
+            {
+                cout << "server>" << std::string(buf, 0, bytesReceived) << endl;
+                closesocket(sock);
+                WSACleanup();
+                return (1);
+            }
+
+            else if(bytesReceived > 0)
+            {
+                cout << "server>" << std::string(buf, 0, bytesReceived) << endl;
+                break;
+            }
+            
+           
+            else if(bytesReceived == 0)
+            {
+                cout << "server>"
+                     << "Connection closed" << endl;
+                closesocket(sock);
+                WSACleanup();
+                return (-1);
+                
+            }
+            else if(bytesReceived == SOCKET_ERROR)
+            {
+                cerr << endl << "Robot Communication Error" << endl;
+                closesocket(sock);
+                WSACleanup();
+                return (-1);
+                
+            }
+            Sleep(ConnectionRate);
+            
+           // break;
+        }
+      
+        closesocket(sock);
+        WSACleanup();
+        return(0);
+    }
+}
+std::string DataParser(double nx,
+                       double ox,
+                       double ax,
+                       double px,
+                       double ny,
+                       double oy,
+                       double ay,
+                       double py,
+                       double nz,
+                       double oz,
+                       double az,
+                       double pz)
+{
+
+
+    double Values[12] = { nx, ox, ax, px, ny, oy, ay, py, nz, oz, az, pz };
+
+    std::string FullString = to_string(Values[0]);
+    for(int i = 1; i <= size(Values) - 1; i++)
+    {
+        FullString = FullString + ',';
+        FullString = FullString + to_string(Values[i]);
+    }
+    return FullString;
+}

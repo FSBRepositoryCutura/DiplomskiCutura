@@ -1,0 +1,1858 @@
+#pragma warning(disable : 4996)
+#include <Eigen/Core>
+#include <Zivid/Visualization/Visualizer.h>
+#include <Zivid/Zivid.h>
+
+#include <opencv2/opencv.hpp>
+
+#include <iostream>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+
+#include <pcl/filters/filter.h>
+#include <pcl/point_cloud.h>
+#include <pcl/visualization/cloud_viewer.h>
+
+#include <pcl/io/pcd_io.h>
+#include <pcl/io/ply_io.h>
+
+#include <algorithm>
+#include <pcl/common/time.h>
+#include <pcl/common/transforms.h>
+#include <pcl/console/parse.h>
+#include <pcl/console/print.h>
+#include <pcl/features/fpfh_omp.h>
+#include <pcl/features/integral_image_normal.h>
+#include <pcl/features/normal_3d_omp.h>
+#include <pcl/filters/statistical_outlier_removal.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/registration/icp.h>
+#include <pcl/registration/sample_consensus_prerejective.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/visualization/cloud_viewer.h>
+
+#include <pcl/ModelCoefficients.h>
+#include <pcl/correspondence.h>
+#include <pcl/features/board.h>
+#include <pcl/features/shot_omp.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/uniform_sampling.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/kdtree/impl/kdtree_flann.hpp>
+#include <pcl/kdtree/kdtree.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/recognition/cg/geometric_consistency.h>
+#include <pcl/recognition/cg/hough_3d.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/sample_consensus/ransac.h>
+#include <pcl/sample_consensus/sac_model_plane.h>
+#include <pcl/sample_consensus/sac_model_sphere.h>
+#include <pcl/segmentation/extract_clusters.h>
+#include <pcl/segmentation/min_cut_segmentation.h>
+#include <pcl/segmentation/region_growing_rgb.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <thread>
+
+// RUTINA ZA EKSTRAKCIJU KLASTERA SCENE
+int ExtractModel();
+void EuclidianClusterization(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud);
+// RUTINE ZA SPREMANJE PCD CLOUDOVA, U BOJI I BEZ BOJE
+void SavePCDFile(std::string FileName, pcl::PointCloud<pcl::PointXYZ> const &object);
+void SavePCDFile(std::string FileName, pcl::PointCloud<pcl::PointXYZRGB> const &object);
+// PASS THROUGH FILTRI, JEDAN ZA OBRADU MODELA, DRUGI ZA ONLINE PRIMJENU
+int passThrough(std::string FilePath,
+                std::string DestinationPath,
+                float x0,
+                float x1,
+                float y0,
+                float y1,
+                float z0,
+                float z1);
+int passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, int x0, int x1, int y0, int y1, int z0, int z1);
+
+// RUTINE ZA IZBACIVANJE RAVNE POVRŠINE IZ OBLAKA TOČAKA
+int PlaneSegmentation(std::string InputPath, std::string OutputPath, float Range);
+int PlaneSegmentation(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, float Range);
+int PlaneSegmentation(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float Range);
+// STATISTICAL OUTLIER FILTER, MIČE OUTLIERE IZ OBLAKA TOČAKA, PARAMETAR MeanK OZNAČAVA NAJMANJI BROJ BLISKIH SUSJEDA
+int SOR_Filter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int MeanK);
+int SOR_Filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, int MeanK);
+// RUTINE ZA VIZUALIZACIJU OBLAKA TOČAKA
+int Visualize(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud);
+int Visualize(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud);
+int Visualize(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud);
+// DOWNSAMPLIRANJE OBLAKA TOČAKA
+int DownSampler(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float leafSize);
+// KONAČNA RUTINA ZA SEGMENTACIJU, PREPOZNAVANJE I LOKALIZACIJU
+int Localization(pcl::PointCloud<pcl::PointXYZ>::Ptr &model, pcl::PointCloud<pcl::PointXYZ>::Ptr &scene);
+Eigen::Matrix4f Localization(pcl::PointCloud<pcl::PointXYZ>::Ptr &modelcopy,
+                             pcl::PointCloud<pcl::PointXYZ>::Ptr &scenecopy,
+                             pcl::PointCloud<pcl::PointXYZ>::Ptr &sceneorigin,
+                             int ReturnMatrix);
+// RUTINE ZA FILTRACIJU SCENE, UKLJUČEN PASSTHROUGH I PLANE FILTER, AKO NEŽELITE PLANE FILTAR ZA PARAMETAR PlaneRange
+// UNESTI 0
+
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr SceneCutFilter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,
+                                                      int x0,
+                                                      int x1,
+                                                      int y0,
+                                                      int y1,
+                                                      int z0,
+                                                      int z1,
+                                                      float PlaneRange);
+pcl::PointCloud<pcl::PointXYZ>::Ptr SceneCutFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
+                                                   int x0,
+                                                   int x1,
+                                                   int y0,
+                                                   int y1,
+                                                   int z0,
+                                                   int z1,
+                                                   float PlaneRange);
+int SceneCutFilter(std::string FilePath,
+                   std::string DestinationPath,
+                   int x0,
+                   int x1,
+                   int y0,
+                   int y1,
+                   int z0,
+                   int z1,
+                   int PlaneRange);
+// RUTINA ZA SLIKANJE SA ZIVIDOM I PREBACIVANJE U PCL FORMAT, cloutPtr JE POKAZIVAČ NA DOBIVENI OBLAK TOČAKA
+int CaptureFrameToPcl(pcl::PointCloud<pcl::PointXYZ>::Ptr cloudPtr);
+// RUTINA ZA LOKALIZACIJU,ULAZ JE CLOUD OBJEKT SPREMLJEN U DATOTECI, IZLAT JE MATRICA TRANSFORMACIJA PRONAĐENOG OBJEKTA
+// U ODNOSU NA REFERENTNI OBJEKT
+int FindObject(std::string Objekt, Eigen::Matrix4f &FinalDisplacement);
+// RUTINA ZA UČITAVANJE ZIVID OBLAKA TOČAKA I SPREMANJE U PCL FORMAT
+int ZividToPcl(std::string Name, std::string FileInputPath, std::string FileOutputPath);
+// MAINLOOP,
+int MainLoop();
+// RUTINE ZA KOMUNIKACIJU
+void TCPClient(std::string userInput);
+int TCPClientReceive();
+std::string DataParser(double nx,
+                       double ny,
+                       double nz,
+                       double ox,
+                       double oy,
+                       double oz,
+                       double kx,
+                       double ky,
+                       double kz,
+                       double px,
+                       double py,
+                       double pz);
+void pointPickingEventOccurred(const pcl::visualization::PointPickingEvent &event, void *viewer_void);
+int AdjustCameraParamaters();
+
+namespace
+{
+    enum class CommandType
+    {
+        cmdAddPose,
+        cmdCalibrate,
+        cmdUnknown
+    };
+
+    std::string getInput()
+    {
+        std::string command;
+        std::getline(std::cin, command);
+        return command;
+    }
+
+    CommandType enterCommand()
+    {
+        std::cout << "Enter command, p (to add robot pose) or c (to perform calibration): ";
+        const auto command = getInput();
+
+        if(command == "P" || command == "p")
+        {
+            return CommandType::cmdAddPose;
+        }
+        if(command == "C" || command == "c")
+        {
+            return CommandType::cmdCalibrate;
+        }
+        return CommandType::cmdUnknown;
+    }
+
+    Zivid::Calibration::Pose enterRobotPose(size_t index)
+    {
+        std::cout << "Enter pose with id (a line with 16 space separated values describing 4x4 row-major matrix) : "
+                  << index << std::endl;
+        std::stringstream input(getInput());
+        float element{ 0 };
+        std::vector<float> transformElements;
+        for(size_t i = 0; i < 16 && input >> element; ++i)
+        {
+            transformElements.emplace_back(element);
+        }
+
+        const auto robotPose{ Zivid::Matrix4x4{ transformElements.cbegin(), transformElements.cend() } };
+        std::cout << "The following pose was entered: \n" << robotPose << std::endl;
+
+        return robotPose;
+    }
+
+    Zivid::Frame assistedCapture(Zivid::Camera &camera)
+    {
+        const auto parameters = Zivid::CaptureAssistant::SuggestSettingsParameters{
+            Zivid::CaptureAssistant::SuggestSettingsParameters::AmbientLightFrequency::none,
+            Zivid::CaptureAssistant::SuggestSettingsParameters::MaxCaptureTime{ std::chrono::milliseconds{ 800 } }
+        };
+        const auto settings = Zivid::CaptureAssistant::suggestSettings(camera, parameters);
+        return camera.capture(settings);
+    }
+
+    Zivid::Calibration::HandEyeOutput performCalibration(const std::vector<Zivid::Calibration::HandEyeInput> &input)
+    {
+        while(true)
+        {
+            std::cout << "Enter type of calibration, eth (for eye-to-hand) or eih (for eye-in-hand): ";
+            const auto calibrationType = getInput();
+            if(calibrationType == "eth" || calibrationType == "ETH")
+            {
+                std::cout << "Performing eye-to-hand calibration" << std::endl;
+                return Zivid::Calibration::calibrateEyeToHand(input);
+            }
+            if(calibrationType == "eih" || calibrationType == "EIH")
+            {
+                std::cout << "Performing eye-in-hand calibration" << std::endl;
+                return Zivid::Calibration::calibrateEyeInHand(input);
+            }
+            std::cout << "Entered uknown method" << std::endl;
+        }
+    }
+} // namespace
+namespace
+{
+    float getValueZ(const Zivid::PointZ &p)
+    {
+        return p.z;
+    }
+
+    bool isLesserOrNan(const Zivid::PointZ &a, const Zivid::PointZ &b)
+    {
+        if(std::isnan(getValueZ(a)) && std::isnan(getValueZ(b)))
+        {
+            return false;
+        }
+        return getValueZ(a) < getValueZ(b) ? true : std::isnan(getValueZ(a));
+    }
+    bool isGreaterOrNaN(const Zivid::PointZ &a, const Zivid::PointZ &b)
+    {
+        if(std::isnan(getValueZ(a)) && std::isnan(getValueZ(b)))
+        {
+            return false;
+        }
+        return getValueZ(a) > getValueZ(b) ? true : std::isnan(getValueZ(a));
+    }
+
+    void visualizePointCloud(const Zivid::PointCloud &pointCloud)
+    {
+        std::cout << "Setting up visualization" << std::endl;
+        Zivid::Visualization::Visualizer visualizer;
+
+        std::cout << "Visualizing point cloud" << std::endl;
+        visualizer.showMaximized();
+        visualizer.show(pointCloud);
+        visualizer.resetToFit();
+
+        std::cout << "Running visualizer. Blocking until window closes" << std::endl;
+        visualizer.run();
+    }
+
+    cv::Mat pointCloudToCvZ(const Zivid::PointCloud &pointCloud)
+    {
+        cv::Mat z(pointCloud.height(), pointCloud.width(), CV_8UC1, cv::Scalar(0)); // NOLINT(hicpp-signed-bitwise)
+        const auto points = pointCloud.copyPointsZ();
+
+        // Getting min and max values for X, Y, Z images
+        const auto *maxZ = std::max_element(points.data(), points.data() + pointCloud.size(), isLesserOrNan);
+        const auto *minZ = std::max_element(points.data(), points.data() + pointCloud.size(), isGreaterOrNaN);
+
+        // Filling in OpenCV matrix with the cloud data
+        for(size_t i = 0; i < pointCloud.height(); i++)
+        {
+            for(size_t j = 0; j < pointCloud.width(); j++)
+            {
+                if(std::isnan(points(i, j).z))
+                {
+                    z.at<uchar>(i, j) = 0;
+                }
+                else
+                {
+                    z.at<uchar>(i, j) =
+                        static_cast<unsigned char>((255.0F * (points(i, j).z - minZ->z) / (maxZ->z - minZ->z)));
+                }
+            }
+        }
+
+        // Applying color map
+        cv::Mat zColorMap;
+        cv::applyColorMap(z, zColorMap, cv::COLORMAP_VIRIDIS);
+
+        // Setting invalid points (nan) to black
+        for(size_t i = 0; i < pointCloud.height(); i++)
+        {
+            for(size_t j = 0; j < pointCloud.width(); j++)
+            {
+                if(std::isnan(points(i, j).z))
+                {
+                    auto &zRGB = zColorMap.at<cv::Vec3b>(i, j);
+                    zRGB[0] = 0;
+                    zRGB[1] = 0;
+                    zRGB[2] = 0;
+                }
+            }
+        }
+
+        return zColorMap;
+    }
+
+    cv::Mat pointCloudToCvBGR(const Zivid::PointCloud &pointCloud)
+    {
+        auto rgb = cv::Mat(pointCloud.height(), pointCloud.width(), CV_8UC4); // NOLINT(hicpp-signed-bitwise)
+        pointCloud.copyData(
+            reinterpret_cast<Zivid::ColorRGBA *>(rgb.data)); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+        auto bgr = cv::Mat(pointCloud.height(), pointCloud.width(), CV_8UC4); // NOLINT(hicpp-signed-bitwise)
+        cv::cvtColor(rgb, bgr, cv::COLOR_BGR2RGB);
+
+        return bgr;
+    }
+
+} // namespace
+
+namespace
+{
+    void visualizePointCloud(const pcl::PointCloud<pcl::PointXYZRGB> &pointCloud)
+    {
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudPTR(new pcl::PointCloud<pcl::PointXYZRGB>);
+        *cloudPTR = pointCloud;
+        std::cout << "Running PCL visualizer. Block until window closes" << std::endl;
+        pcl::visualization::CloudViewer viewer("Simple Cloud Viewer");
+        viewer.showCloud(cloudPTR);
+        std::cout << "Press r to centre and zoom the viewer so that the entire cloud is visible" << std::endl;
+        std::cout << "Press q to exit the viewer application" << std::endl;
+        while(!viewer.wasStopped())
+        {}
+    }
+
+    cv::Mat pointCloudToCvZ(const pcl::PointCloud<pcl::PointXYZRGB> &pointCloud)
+    {
+        // Getting min and max values for X, Y, Z images
+        float zMax = -1;
+        float zMin = 1000000;
+        for(size_t i = 0; i < pointCloud.height; i++)
+        {
+            for(size_t j = 0; j < pointCloud.width; j++)
+            {
+                zMax = std::max(zMax, pointCloud(j, i).z);
+                zMin = std::min(zMin, pointCloud(j, i).z);
+            }
+        }
+
+        // Filling in OpenCV matrix with the cloud data
+        cv::Mat z(pointCloud.height, pointCloud.width, CV_8UC1, cv::Scalar(0)); // NOLINT(hicpp-signed-bitwise)
+        for(size_t i = 0; i < pointCloud.height; i++)
+        {
+            for(size_t j = 0; j < pointCloud.width; j++)
+            {
+                if(std::isnan(pointCloud(j, i).z))
+                {
+                    z.at<uint8_t>(i, j) = 0;
+                }
+                else
+                {
+                    // If few points are captured resulting in zMin == zMax, this will throw an division-by-zero
+                    // exception.
+                    z.at<uint8_t>(i, j) = static_cast<uint8_t>((255.0F * (pointCloud(j, i).z - zMin) / (zMax - zMin)));
+                }
+            }
+        }
+
+        // Applying color map
+        cv::Mat zColorMap;
+        cv::applyColorMap(z, zColorMap, cv::COLORMAP_VIRIDIS);
+
+        // Setting invalid points (nan) to black
+        for(size_t i = 0; i < pointCloud.height; i++)
+        {
+            for(size_t j = 0; j < pointCloud.width; j++)
+            {
+                if(std::isnan(pointCloud(j, i).z))
+                {
+                    auto &zRGB = zColorMap.at<cv::Vec3b>(i, j);
+                    zRGB[0] = 0;
+                    zRGB[1] = 0;
+                    zRGB[2] = 0;
+                }
+            }
+        }
+        return zColorMap;
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGB> maskPointCloud(const Zivid::PointCloud &pointCloud, const cv::Mat &mask)
+    {
+        const auto data = pointCloud.copyPointsXYZColorsRGBA();
+        const int height = data.height();
+        const int width = data.width();
+
+        // Creating point cloud structure
+        pcl::PointCloud<pcl::PointXYZRGB> maskedPointCloud(width, height);
+        maskedPointCloud.is_dense = false;
+        maskedPointCloud.points.resize(height * width);
+
+        // Copying data points within the mask. Rest is set to NaN
+        for(int i = 0; i < height; i++)
+        {
+            for(int j = 0; j < width; j++)
+            {
+                if(mask.at<uint8_t>(i, j) > 0)
+                {
+                    maskedPointCloud(j, i).r = data(i, j).color.r;
+                    maskedPointCloud(j, i).g = data(i, j).color.g;
+                    maskedPointCloud(j, i).b = data(i, j).color.b;
+                    maskedPointCloud(j, i).x = data(i, j).point.x;
+                    maskedPointCloud(j, i).y = data(i, j).point.y;
+                    maskedPointCloud(j, i).z = data(i, j).point.z;
+                }
+                else
+                {
+                    maskedPointCloud(j, i).r = 0;
+                    maskedPointCloud(j, i).g = 0;
+                    maskedPointCloud(j, i).b = 0;
+                    maskedPointCloud(j, i).x = NAN;
+                    maskedPointCloud(j, i).y = NAN;
+                    maskedPointCloud(j, i).z = NAN;
+                }
+            }
+        }
+
+        return maskedPointCloud;
+    }
+
+    void visualizeDepthMap(const pcl::PointCloud<pcl::PointXYZRGB> &pointCloud)
+    {
+        // Converting to Depth map in OpenCV format
+        cv::Mat zColorMap = pointCloudToCvZ(pointCloud);
+        // Visualizing Depth map
+        cv::namedWindow("Depth map", cv::WINDOW_AUTOSIZE);
+        cv::imshow("Depth map", zColorMap);
+        cv::waitKey(0);
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGB> convertToPCLPointCloud(const Zivid::PointCloud &pointCloud)
+    {
+        const auto data = pointCloud.copyData<Zivid::PointXYZColorRGBA>();
+
+        // Creating PCL point cloud structure
+        pcl::PointCloud<pcl::PointXYZRGB> pointCloudPCL;
+        pointCloudPCL.width = pointCloud.width();
+        pointCloudPCL.height = pointCloud.height();
+        pointCloudPCL.is_dense = false;
+        pointCloudPCL.points.resize(pointCloudPCL.width * pointCloudPCL.height);
+
+        // Filling in point cloud data
+        for(size_t i = 0; i < pointCloudPCL.points.size(); ++i)
+        {
+            pointCloudPCL.points[i].x = data(i).point.x; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].y = data(i).point.y; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].z = data(i).point.z; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].r = data(i).color.r; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].g = data(i).color.g; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].b = data(i).color.b; // NOLINT(cppcoreguidelines-pro-type-union-access)
+        }
+        return pointCloudPCL;
+    }
+
+} // namespace
+
+// Types
+typedef pcl::PointNormal PointNT;
+typedef pcl::PointCloud<PointNT> PointCloudT;
+typedef pcl::FPFHSignature33 FeatureT;
+typedef pcl::FPFHEstimationOMP<PointNT, PointNT, FeatureT> FeatureEstimationT;
+typedef pcl::PointCloud<FeatureT> FeatureCloudT;
+typedef pcl::visualization::PointCloudColorHandlerCustom<PointNT> ColorHandlerT;
+typedef pcl::PointXYZ PointType;
+typedef pcl::Normal NormalType;
+typedef pcl::ReferenceFrame RFType;
+typedef pcl::SHOT352 DescriptorType;
+
+std::string model_filename_;
+std::string scene_filename_;
+double nx, ny, nz;
+double ox, oy, oz;
+double ax, ay, az;
+double px, py, pz;
+
+bool show_keypoints_(false);
+bool show_correspondences_(false);
+bool use_cloud_resolution_(false);
+bool use_hough_(true);
+
+/// <summary>
+/// neki uspjeh
+/// </summary>
+float model_ss_(0.001f);
+float scene_ss_(0.001f);
+float rf_rad_(1.0f);
+float descr_rad_(15.0f);
+float cg_size_(5.1f);
+float cg_thresh_(80.0f);
+
+
+// Primjeri paramateara/Paramater Examples
+// float model_ss_(0.1f);
+// float scene_ss_(0.1f);
+// float rf_rad_(25.0f);
+// float descr_rad_(25.0f);
+// float cg_size_(20.0f);
+// float cg_thresh_(350.0f);
+
+// float model_ss_(0.1f);
+// float scene_ss_(0.1f);
+// float rf_rad_(15.0f);
+// float descr_rad_(15.0f);
+// float cg_size_(5.0f);
+// float cg_thresh_(30.0f);
+//
+// float model_ss_(0.001f);
+// float scene_ss_(0.001f);
+// float rf_rad_(1.0f);
+// float descr_rad_(15.0f);
+// float cg_size_(5.1f);
+// float cg_thresh_(300.0f);
+
+// float model_ss_(0.1f);
+// float scene_ss_(0.1f);
+// float rf_rad_(7.0f);
+// float descr_rad_(25.0f);
+// float cg_size_(5.0f);
+// float cg_thresh_(350.0f);
+
+int icp_max_iter_(100);
+float icp_corr_distance_(1.0f);
+
+int a = 1;
+std::string ScenePath;
+std::string Start;
+std::string Filtered;
+std::string ObjectPath;
+std::string CameraDest;
+int main()
+{
+    // ExtractModel();
+    MainLoop();
+    return (0);
+}
+
+void EuclidianClusterization(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
+{
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    std::vector<pcl::PointIndices> cluster_indices;
+    tree->setInputCloud(cloud);
+    pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
+
+    ec.setClusterTolerance(1); // 2cm
+    ec.setMinClusterSize(10000);
+    ec.setMaxClusterSize(35000); // 150000
+
+    ec.setSearchMethod(tree);
+    ec.setInputCloud(cloud);
+    ec.extract(cluster_indices);
+    for(std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin(); it != cluster_indices.end(); ++it)
+    {
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZ>);
+        for(std::vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); ++pit)
+            cloud_cluster->push_back((*cloud)[*pit]); //*
+        cloud_cluster->width = cloud_cluster->size();
+        cloud_cluster->height = 1;
+        cloud_cluster->is_dense = true;
+        // if(cloud_cluster->size()>1000);
+        *filtered_cloud += *cloud_cluster;
+        std::cout << cloud_cluster->size() << std::endl;
+    }
+    pcl::copyPointCloud(*filtered_cloud, *cloud);
+}
+int SceneCutFilter(std::string FilePath,
+                   std::string DestinationPath,
+                   int x0,
+                   int x1,
+                   int y0,
+                   int y1,
+                   int z0,
+                   int z1,
+                   int PlaneRange)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    if(pcl::io::loadPCDFile<pcl::PointXYZRGB>(FilePath, *cloud) == -1)
+    {
+        std::cout << "Cloud reading failed." << std::endl;
+        return (-1);
+    }
+    pcl::PassThrough<pcl::PointXYZRGB> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(x0, x1);
+    pass.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass2;
+    pass2.setInputCloud(cloud);
+    pass2.setFilterFieldName("y");
+    pass2.setFilterLimits(y0, y1);
+    pass2.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass3;
+    pass3.setInputCloud(cloud);
+    pass3.setFilterFieldName("z");
+    pass3.setFilterLimits(z0, z1);
+    pass3.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    if(PlaneRange > 0)
+    {
+        PlaneSegmentation(cloud, PlaneRange);
+    }
+
+    std::cerr << "Cloud after filtering: " << std::endl;
+    Visualize(cloud);
+
+    SavePCDFile(DestinationPath, *cloud_filtered);
+
+    return 0;
+};
+pcl::PointCloud<pcl::PointXYZ>::Ptr SceneCutFilter(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
+                                                   int x0,
+                                                   int x1,
+                                                   int y0,
+                                                   int y1,
+                                                   int z0,
+                                                   int z1,
+                                                   float PlaneRange)
+{
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+
+    pcl::PassThrough<pcl::PointXYZ> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(x0, x1);
+    pass.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZ> pass2;
+    pass2.setInputCloud(cloud);
+    pass2.setFilterFieldName("y");
+    pass2.setFilterLimits(y0, y1);
+    pass2.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZ> pass3;
+    pass3.setInputCloud(cloud);
+    pass3.setFilterFieldName("z");
+    pass3.setFilterLimits(z0, z1);
+    pass3.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    if(PlaneRange > 0)
+    {
+        PlaneSegmentation(cloud, PlaneRange);
+    }
+    return cloud_filtered;
+}
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr SceneCutFilter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud,
+                                                      int x0,
+                                                      int x1,
+                                                      int y0,
+                                                      int y1,
+                                                      int z0,
+                                                      int z1,
+                                                      float PlaneRange)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    pcl::PassThrough<pcl::PointXYZRGB> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(x0, x1);
+    pass.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass2;
+    pass2.setInputCloud(cloud);
+    pass2.setFilterFieldName("y");
+    pass2.setFilterLimits(y0, y1);
+    pass2.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass3;
+    pass3.setInputCloud(cloud);
+    pass3.setFilterFieldName("z");
+    pass3.setFilterLimits(z0, z1);
+    pass3.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    if(PlaneRange > 0)
+    {
+        PlaneSegmentation(cloud, PlaneRange);
+    }
+    std::cerr << "Cloud after filtering: " << std::endl;
+    Visualize(cloud_filtered);
+    return cloud_filtered;
+}
+int ExtractModel()
+{
+    int i = 0;
+    std::string Pics;
+    std::string ObjectPath;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr model(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr modelcopy(new pcl::PointCloud<pcl::PointXYZ>);
+
+    cout << "unesite Ime" << endl;
+    cin >> Pics;
+
+    ZividToPcl(Pics,
+               "C:/Users/CRTA/Desktop/MarkoCutura/zividslike/Raw/" + Pics,
+               "C:/Users/CRTA/Desktop/MarkoCutura/zividslike/RawToPCD/" + Pics);
+
+    ObjectPath = "C:/Users/CRTA/Desktop/MarkoCutura/zividslike/RawToPCD/" + Pics + ".pcd";
+    if(pcl::io::loadPCDFile(ObjectPath, *model) < 0)
+    {
+        std::cout << "***Error loading model cloud***." << std::endl;
+        // showHelp(argv[0]);
+        return (-1);
+    }
+    pcl::copyPointCloud(*model, *modelcopy);
+    // PASSTHROUGH LIMITI
+    float x0 = -107;
+    float x1 = 23;
+    float y0 = -125.8;
+    float y1 = -60;
+    float z0 = 930;
+    float z1 = 1000;
+    float PlaneRange = 2;
+    float NearestNeighbourSOR = 15;
+
+    //-186, 300, -150, 170, 920, 1000
+    float modify_pos;
+    SceneCutFilter(modelcopy, x0, x1, y0, y1, z0, z1, 0);
+
+    // modelcopy = SceneCutFilter(modelcopy, -180, 190, -185, 83, 650, 980, 0);
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Scene cut to XYZ Box(PassThrough)***" << endl;
+    std::cout << "Showing scene after PassThrough Filter" << std::endl;
+    Visualize(modelcopy);
+    cout << "Size of model cloud:" << modelcopy->size() << " points" << endl;
+    std::cout << "Showing reference model" << std::endl;
+    Visualize(modelcopy);
+
+    std::cout << "*----------------*" << std::endl;
+    PlaneSegmentation(modelcopy, PlaneRange);
+    cout << "***Plane Segmentation of scene Finished***" << endl;
+    std::cout << "Showing scene after PlaneSegmentation Filter with range of " << PlaneRange << " mm" << std::endl;
+    Visualize(modelcopy);
+
+
+    SavePCDFile("C:/Users/CRTA/Desktop/MarkoCutura/zividslike/Extracted/" + Pics + ".pcd", *modelcopy);
+    return (0);
+}
+
+int passThrough(std::string FilePath,
+                std::string DestinationPath,
+                float x0,
+                float x1,
+                float y0,
+                float y1,
+                float z0,
+                float z1)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    if(pcl::io::loadPCDFile<pcl::PointXYZRGB>(FilePath, *cloud) == -1)
+    {
+        std::cout << "Cloud reading failed." << std::endl;
+        return (-1);
+    }
+    Visualize(cloud);
+    pcl::PassThrough<pcl::PointXYZRGB> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(x0, x1);
+    pass.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass2;
+    pass2.setInputCloud(cloud);
+    pass2.setFilterFieldName("y");
+    pass2.setFilterLimits(y0, y1);
+    pass2.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass3;
+    pass3.setInputCloud(cloud);
+    pass3.setFilterFieldName("z");
+    pass3.setFilterLimits(z0, z1);
+    pass3.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    std::cerr << "Cloud after filtering: " << std::endl;
+    Visualize(cloud_filtered);
+
+    SavePCDFile(DestinationPath, *cloud_filtered);
+
+    return 0;
+}
+int passThrough(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, int x0, int x1, int y0, int y1, int z0, int z1)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    pcl::PassThrough<pcl::PointXYZRGB> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("x");
+
+    pass.setFilterLimits(x0, x1);
+    pass.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass2;
+    pass2.setInputCloud(cloud);
+    pass2.setFilterFieldName("y");
+    pass2.setFilterLimits(y0, y1);
+    pass2.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+
+    *cloud = *cloud_filtered;
+    pcl::PassThrough<pcl::PointXYZRGB> pass3;
+    pass3.setInputCloud(cloud);
+    pass3.setFilterFieldName("z");
+    pass3.setFilterLimits(z0, z1);
+    pass3.filter(*cloud_filtered);
+
+    *cloud = *cloud_filtered;
+
+    return 0;
+}
+
+int Visualize(pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud)
+{
+    pcl::visualization::CloudViewer viewer("Simple Cloud Viewer");
+
+    viewer.showCloud(cloud);
+    while(!viewer.wasStopped())
+    {}
+    return (0);
+}
+
+int Visualize(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
+{
+    pcl::visualization::CloudViewer viewer("Simple Cloud Viewer");
+
+    viewer.showCloud(cloud);
+    while(!viewer.wasStopped())
+    {}
+    return (0);
+}
+int Visualize(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud)
+{
+    pcl::visualization::CloudViewer viewer("Simple Cloud Viewer");
+
+    viewer.showCloud(cloud);
+    while(!viewer.wasStopped())
+    {}
+    return (0);
+}
+
+int DownSampler(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float leafSize)
+{
+    pcl::VoxelGrid<pcl::PointXYZ> sor;
+    sor.setInputCloud(cloud);
+    sor.setLeafSize(leafSize, leafSize, leafSize);
+    sor.filter(*cloud);
+    return (1);
+}
+
+int PlaneSegmentation(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, float Range)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudplane(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+
+    // Create the segmentation object
+    pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+    // Optional
+    seg.setOptimizeCoefficients(false);
+    // Mandatory
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(Range);
+
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, *coefficients);
+
+    if(inliers->indices.size() == 0)
+    {
+        PCL_ERROR("Could not estimate a planar model for the given dataset.");
+        return (-1);
+    }
+
+    std::cerr << "Model coefficients: " << coefficients->values[0] << " " << coefficients->values[1] << " "
+              << coefficients->values[2] << " " << coefficients->values[3] << std::endl;
+
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+    extract.setInputCloud(cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(true);
+
+    // Zeljena ravnina
+    extract.filter(*cloud);
+}
+int PlaneSegmentation(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, float Range)
+{
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloudplane(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+
+    // Create the segmentation object
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    // Optional
+    seg.setOptimizeCoefficients(false);
+    // Mandatory
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(Range);
+
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, *coefficients);
+
+    if(inliers->indices.size() == 0)
+    {
+        PCL_ERROR("Could not estimate a planar model for the given dataset.");
+        return (-1);
+    }
+    cout << endl;
+    std::cerr << "Model coefficients: " << coefficients->values[0] << " " << coefficients->values[1] << " "
+              << coefficients->values[2] << " " << coefficients->values[3] << std::endl;
+
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(true);
+
+    // Zeljena ravnina
+    extract.filter(*cloud);
+}
+int PlaneSegmentation(std::string InputPath, std::string OutputPath, float Range)
+{
+    int SOR_Filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr & cloud);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudplane(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    if(pcl::io::loadPCDFile<pcl::PointXYZRGB>(InputPath, *cloud) == -1)
+    {
+        std::cout << "Cloud reading failed." << std::endl;
+        return (-1);
+    }
+
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+
+    // Create the segmentation object
+    pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+    // Optional
+    seg.setOptimizeCoefficients(false);
+    // Mandatory
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setDistanceThreshold(Range);
+
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, *coefficients);
+
+    if(inliers->indices.size() == 0)
+    {
+        PCL_ERROR("Could not estimate a planar model for the given dataset.");
+        return (-1);
+    }
+
+    std::cerr << "Model coefficients: " << coefficients->values[0] << " " << coefficients->values[1] << " "
+              << coefficients->values[2] << " " << coefficients->values[3] << std::endl;
+
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+    extract.setInputCloud(cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(true);
+
+    // Zeljena ravnina
+    extract.filter(*cloud);
+    // SOR_Filter(cloud);
+    SavePCDFile(OutputPath, *cloud);
+    cout << endl << "PLANE SEGMENT VISUALIZE" << endl;
+    Visualize(cloud);
+}
+
+
+// int argc,char *argv[]
+int ZividToPcl(std::string Input, std::string FileInput, std::string FileOutput)
+{
+    std::cout << "start " << std::endl;
+    Zivid::Application zivid;
+    std::string InitString = FileInput + ".zdf";
+    std::string OutputString = FileOutput + ".pcd";
+    cout << endl << InitString << endl;
+    std::cout << "Reading ZDF frame from file: " << InitString << std::endl;
+    const auto frame = Zivid::Frame(InitString);
+
+    std::cout << "Getting point cloud from frame" << std::endl;
+    const auto pointCloud = frame.pointCloud();
+
+    const int pixelsToDisplay = 300;
+    std::cout << "Generating binary mask of central " << pixelsToDisplay << " x " << pixelsToDisplay << "pixels."
+              << std::endl;
+    const int height = pointCloud.height();
+    const int width = pointCloud.width();
+    const int heightMin = (height - pixelsToDisplay) / 2;
+    const int heightMax = (height + pixelsToDisplay) / 2;
+    const int widthMin = (width - pixelsToDisplay) / 2;
+    const int widthMax = (width + pixelsToDisplay) / 2;
+    cv::Mat mask = cv::Mat::zeros(height, width, CV_8U);
+    cv::rectangle(mask,
+                  cv::Point(widthMin, heightMin),
+                  cv::Point(widthMax, heightMax),
+                  cv::Scalar(255, 255, 255),
+                  cv::FILLED);
+
+    std::cout << "Converting to PCL point cloud" << std::endl;
+    // const auto pointCloudPCL = convertToPCLPointCloud(pointCloud);
+    const auto cloud1 = convertToPCLPointCloud(pointCloud);
+    std::cout << "finished" << std::endl;
+    SavePCDFile(OutputString, cloud1);
+    std::cout << std::to_string(cloud1.height) << endl;
+    std::cout << std::to_string(cloud1.width) << endl;
+    return (1);
+}
+
+int CaptureFrameToPcl(pcl::PointCloud<pcl::PointXYZ>::Ptr cloudPtr)
+
+{
+
+    try
+    {
+        Zivid::Application zivid;
+
+        std::cout << "Connecting to camera" << std::endl;
+        auto camera = zivid.connectCamera();
+
+        std::cout << "Creating settings" << std::endl;
+        const auto settings = Zivid::Settings{ Zivid::Settings::Acquisitions{
+            Zivid::Settings::Acquisition{ Zivid::Settings::Acquisition::Aperture{ 5.66 } } } };
+        const int exposureTime = 6500;
+        const double aperture = 2.02;
+        const double gain = 3.57;
+        const double brightness = 1.8;
+        const bool gauss = true;
+        const bool removal = true;
+
+        std::cout << "Capturing frame" << std::endl;
+        // const auto frame = camera.capture(settings);
+        const auto frame = assistedCapture(camera);
+        std::cout << "Setting up visualization" << std::endl;
+        Zivid::Visualization::Visualizer visualizer;
+
+        std::cout << "Visualizing point cloud" << std::endl;
+        visualizer.showMaximized();
+        visualizer.show(frame);
+        visualizer.resetToFit();
+
+        std::cout << "Running visualizer. Blocking until window closes" << std::endl;
+        visualizer.run();
+
+        const auto pointCloud = frame.pointCloud();
+        const auto data = pointCloud.copyData<Zivid::PointXYZColorRGBA>();
+
+        std::cout << "Creating PCL point cloud structure" << std::endl;
+        pcl::PointCloud<pcl::PointXYZRGB> pointCloudPCL;
+
+        std::cout << "Filling in point cloud data" << std::endl;
+        pointCloudPCL.width = pointCloud.width();
+        pointCloudPCL.height = pointCloud.height();
+        pointCloudPCL.is_dense = false;
+        pointCloudPCL.points.resize(pointCloudPCL.width * pointCloudPCL.height);
+
+        for(size_t i = 0; i < pointCloudPCL.points.size(); ++i)
+        {
+            pointCloudPCL.points[i].x = data(i).point.x; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].y = data(i).point.y; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].z = data(i).point.z; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].r = data(i).color.r; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].g = data(i).color.g; // NOLINT(cppcoreguidelines-pro-type-union-access)
+            pointCloudPCL.points[i].b = data(i).color.b; // NOLINT(cppcoreguidelines-pro-type-union-access)
+        }
+
+
+        pcl::copyPointCloud(pointCloudPCL, *cloudPtr);
+        std::cout << "showincloudptr" << std::endl;
+        Visualize(cloudPtr);
+        return (0);
+    }
+
+    catch(const std::exception &e)
+    {
+        std::cerr << "Error: " << Zivid::toString(e) << std::endl;
+        std::cout << "Press enter to exit." << std::endl;
+        std::cin.get();
+        return EXIT_FAILURE;
+    }
+}
+
+Eigen::Matrix4f Localization(pcl::PointCloud<pcl::PointXYZ>::Ptr &modelcopy,
+                             pcl::PointCloud<pcl::PointXYZ>::Ptr &scenecopy,
+                             pcl::PointCloud<pcl::PointXYZ>::Ptr &sceneorigin,
+                             int ReturnMatrix)
+
+{
+    pcl::PointCloud<PointType>::Ptr model_keypoints(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr scene_keypoints(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<NormalType>::Ptr model_normals(new pcl::PointCloud<NormalType>());
+    pcl::PointCloud<NormalType>::Ptr scene_normals(new pcl::PointCloud<NormalType>());
+    pcl::PointCloud<DescriptorType>::Ptr model_descriptors(new pcl::PointCloud<DescriptorType>());
+    pcl::PointCloud<DescriptorType>::Ptr scene_descriptors(new pcl::PointCloud<DescriptorType>());
+    pcl::PointCloud<PointType>::Ptr model(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr scene(new pcl::PointCloud<PointType>());
+    pcl::PointCloud<PointType>::Ptr sceneForVisualizer(new pcl::PointCloud<PointType>());
+
+    pcl::copyPointCloud(*modelcopy, *model);
+    pcl::copyPointCloud(*scenecopy, *scene);
+
+    pcl::NormalEstimationOMP<PointType, NormalType> norm_est;
+    norm_est.setKSearch(15);
+    norm_est.setInputCloud(model);
+    norm_est.compute(*model_normals);
+    norm_est.setInputCloud(scene);
+    norm_est.compute(*scene_normals);
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Normals Computed***" << endl;
+
+    pcl::UniformSampling<PointType> uniform_sampling;
+    uniform_sampling.setInputCloud(model);
+    uniform_sampling.setRadiusSearch(model_ss_);
+    uniform_sampling.filter(*model_keypoints);
+    uniform_sampling.setInputCloud(scene);
+    uniform_sampling.setRadiusSearch(scene_ss_);
+    uniform_sampling.filter(*scene_keypoints);
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Keypoints Computed***" << endl;
+
+    pcl::SHOTEstimationOMP<PointType, NormalType, DescriptorType> descr_est;
+    descr_est.setRadiusSearch(descr_rad_);
+    descr_est.setInputCloud(model_keypoints);
+    descr_est.setInputNormals(model_normals);
+    descr_est.setSearchSurface(model);
+    descr_est.compute(*model_descriptors);
+    descr_est.setInputCloud(scene_keypoints);
+    descr_est.setInputNormals(scene_normals);
+    descr_est.setSearchSurface(scene);
+    descr_est.compute(*scene_descriptors);
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Descriptors Computed***" << endl;
+
+    pcl::CorrespondencesPtr model_scene_corrs(new pcl::Correspondences());
+
+    pcl::KdTreeFLANN<DescriptorType> match_search;
+    match_search.setInputCloud(model_descriptors);
+
+    for(std::size_t i = 0; i < scene_descriptors->size(); ++i)
+    {
+        std::vector<int> neigh_indices(1);
+        std::vector<float> neigh_sqr_dists(1);
+        if(!std::isfinite(scene_descriptors->at(i).descriptor[0]))
+        {
+            continue;
+        }
+        int found_neighs = match_search.nearestKSearch(scene_descriptors->at(i), 1, neigh_indices, neigh_sqr_dists);
+        if(found_neighs == 1 && neigh_sqr_dists[0] < 0.25f)
+        {
+            pcl::Correspondence corr(neigh_indices[0], static_cast<int>(i), neigh_sqr_dists[0]);
+            model_scene_corrs->push_back(corr);
+        }
+    }
+
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Correspondences Computed***" << endl;
+
+    std::vector<Eigen::Matrix4f, Eigen::aligned_allocator<Eigen::Matrix4f>> rototranslations;
+    Eigen::Matrix4f ICPrototranslation = Eigen::Matrix4f::Identity();
+    std::vector<pcl::Correspondences> clustered_corrs;
+
+    pcl::PointCloud<RFType>::Ptr model_rf(new pcl::PointCloud<RFType>());
+    pcl::PointCloud<RFType>::Ptr scene_rf(new pcl::PointCloud<RFType>());
+
+    pcl::BOARDLocalReferenceFrameEstimation<PointType, NormalType, RFType> rf_est;
+    rf_est.setFindHoles(true);
+
+    rf_est.setRadiusSearch(rf_rad_);
+    rf_est.setInputCloud(model_keypoints);
+    rf_est.setInputNormals(model_normals);
+    rf_est.setSearchSurface(model);
+    rf_est.compute(*model_rf);
+
+    rf_est.setInputCloud(scene_keypoints);
+    rf_est.setInputNormals(scene_normals);
+    rf_est.setSearchSurface(scene);
+    rf_est.compute(*scene_rf);
+
+    pcl::Hough3DGrouping<PointType, PointType, RFType, RFType> clusterer;
+    clusterer.setHoughBinSize(cg_size_);
+    clusterer.setHoughThreshold(cg_thresh_);
+    clusterer.setUseInterpolation(true);
+    clusterer.setUseDistanceWeight(false);
+
+    clusterer.setInputCloud(model_keypoints);
+    clusterer.setInputRf(model_rf);
+
+    clusterer.setSceneCloud(scene_keypoints);
+    clusterer.setSceneRf(scene_rf);
+    clusterer.setModelSceneCorrespondences(model_scene_corrs);
+    clusterer.recognize(rototranslations, clustered_corrs);
+
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Clustering Computed***" << endl;
+    if(rototranslations.size() <= 0)
+    {
+        std::cout << "*** No instances found! ***" << std::endl;
+        return (Eigen::Matrix4f::Identity());
+    }
+    else
+    {
+        std::cout << "Recognized Instances: " << rototranslations.size() << std::endl << std::endl;
+    }
+    int main_instance = 0;
+    int max_size = clustered_corrs[0].size();
+    for(int k = 1; k <= clustered_corrs.size() - 1; k++)
+    {
+        if(clustered_corrs[k].size() > clustered_corrs[k - 1].size() && clustered_corrs.size() > 1
+           && clustered_corrs[k].size() > max_size)
+        {
+            main_instance = k;
+            max_size = clustered_corrs[k].size();
+        }
+    }
+    cout << "Number of Clusters: " << clustered_corrs.size() << endl;
+    for(int i = 0; i <= clustered_corrs.size() - 1; i++)
+    {
+        cout << endl;
+        cout << "Cluster " << i << " Correspondences"
+             << ": " << clustered_corrs[i].size() << endl;
+    }
+
+    std::cout << "*----------------*" << std::endl;
+    std::cout << "Main instance is " << main_instance << endl;
+
+    std::vector<pcl::PointCloud<PointType>::ConstPtr> instances;
+    for(std::size_t i = 0; i < rototranslations.size(); ++i)
+    {
+        pcl::PointCloud<PointType>::Ptr rotated_model(new pcl::PointCloud<PointType>());
+        pcl::transformPointCloud(*model, *rotated_model, rototranslations[i]);
+        instances.push_back(rotated_model);
+    }
+
+    // ICP
+    std::cout << "*----------------*" << std::endl;
+    std::cout << "Using ICP on Main instance:" << main_instance << endl;
+
+    std::vector<pcl::PointCloud<PointType>::ConstPtr> registered_instances;
+    pcl::registration::TransformationEstimationSVD<PointType, PointType>::Ptr trans_svd(
+        new pcl::registration::TransformationEstimationSVD<PointType, PointType>);
+    std::cout << "--- ICP ---------" << std::endl;
+    pcl::IterativeClosestPoint<PointType, PointType> icp;
+    icp.setMaximumIterations(icp_max_iter_);
+    icp.setMaxCorrespondenceDistance(icp_corr_distance_);
+    // icp.setTransformationEstimation(trans_svd);
+    // icp.setTransformationEpsilon(1e-9);
+    // icp.setTransformationRotationEpsilon(1e-9);
+    // icp.setEuclideanFitnessEpsilon(0.1);
+
+    icp.setInputTarget(scene);
+
+    icp.setInputSource(instances[main_instance]);
+    pcl::PointCloud<PointType>::Ptr registered(new pcl::PointCloud<PointType>);
+    icp.align(*registered);
+    registered_instances.push_back(registered);
+    if(icp.hasConverged())
+    {
+        std::cout << "*----------------*" << std::endl;
+        std::cout << "Aligned!" << std::endl;
+        ICPrototranslation = icp.final_transformation_;
+    }
+    else
+    {
+        std::cout << "*----------------*" << std::endl;
+        std::cout << "Not Aligned!" << std::endl;
+    }
+
+    int minimum_corresp_val = 50;
+    bool instance_found = false;
+    std::cout << "*----------------*" << std::endl;
+    std::cout << "\n   Main Instance "
+              << ":" << std::endl;
+    std::cout << "        Correspondences belonging to this instance: " << clustered_corrs[main_instance].size()
+              << std::endl;
+
+
+    {
+        Eigen::Matrix3f rotation = rototranslations[main_instance].block<3, 3>(0, 0);
+        Eigen::Vector3f translation = rototranslations[main_instance].block<3, 1>(0, 3);
+        printf("\n");
+        printf("            | %6.3f %6.3f %6.3f | \n", rotation(0, 0), rotation(0, 1), rotation(0, 2));
+        printf("        R = | %6.3f %6.3f %6.3f | \n", rotation(1, 0), rotation(1, 1), rotation(1, 2));
+        printf("            | %6.3f %6.3f %6.3f | \n", rotation(2, 0), rotation(2, 1), rotation(2, 2));
+        printf("\n");
+        printf("        t = < %0.3f, %0.3f, %0.3f >\n", translation(0), translation(1), translation(2));
+
+        std::cout << "\n   Main Instance ICP "
+                     ":"
+                  << std::endl;
+        std::cout << "        Correspondences belonging to this instance: " << clustered_corrs[main_instance].size()
+                  << std::endl;
+    }
+    std::cout << "ICP:" << std::endl;
+    // Print the rotation matrix and translation vector
+    {
+        Eigen::Matrix3f rotation = ICPrototranslation.block<3, 3>(0, 0);
+        Eigen::Vector3f translation = ICPrototranslation.block<3, 1>(0, 3);
+
+        printf("\n");
+        printf("            | %6.3f %6.3f %6.3f | \n", rotation(0, 0), rotation(0, 1), rotation(0, 2));
+        printf("        R = | %6.3f %6.3f %6.3f | \n", rotation(1, 0), rotation(1, 1), rotation(1, 2));
+        printf("            | %6.3f %6.3f %6.3f | \n", rotation(2, 0), rotation(2, 1), rotation(2, 2));
+        printf("\n");
+        printf("        t = < %0.3f, %0.3f, %0.3f >\n", translation(0), translation(1), translation(2));
+    }
+
+    // Članovi matrice transformacija dobiveni HandEye kalibracijom: RobotToCameraDisp
+    float nxHE = -0.006731, nyHE = 0.999838, nzHE = -0.016695, axHE = 0.999760, ayHE = 0.007077, azHE = 0.020750,
+          oxHE = 0.020865, oyHE = -0.016551, ozHE = -0.999645, pxHE = 585.775879, pyHE = -81.999069, pzHE = 518.539856;
+    // robot to camera displacement
+    Eigen::Matrix4f objectDisp = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f RobotToCameraDisp = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f RobotToCameraDispInv = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f FinalDisplacement = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f CameraToReference = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f RobotToReference =
+        Eigen::Matrix4f::Identity(); // Pozicijska varijabla 500 u obliku matrice homogenih transformacija
+
+    // Ovdje upisati referentu poziciju u obliku matrice homogenih transformacija
+    RobotToReference(0, 0) = -0.173616;
+    RobotToReference(1, 0) = -0.984814;
+    RobotToReference(2, 0) = -0.000037;
+
+    RobotToReference(0, 1) = -0.984814;
+    RobotToReference(1, 1) = 0.173616;
+    RobotToReference(2, 1) = -0.000084;
+
+    RobotToReference(0, 2) = 0.000089;
+    RobotToReference(1, 2) = 0.000022;
+    RobotToReference(2, 2) = -1.000000;
+
+    RobotToReference(0, 3) = 513.422000;
+    RobotToReference(1, 3) = -147.647000;
+    RobotToReference(2, 3) = -445.163000;
+
+    // Matrica dobivena HandEye kalibracijom
+    RobotToCameraDisp(0, 0) = nxHE;
+    RobotToCameraDisp(1, 0) = nyHE;
+    RobotToCameraDisp(2, 0) = nzHE;
+
+    RobotToCameraDisp(0, 1) = axHE;
+    RobotToCameraDisp(1, 1) = ayHE;
+    RobotToCameraDisp(2, 1) = azHE;
+
+    RobotToCameraDisp(0, 2) = oxHE;
+    RobotToCameraDisp(1, 2) = oyHE;
+    RobotToCameraDisp(2, 2) = ozHE;
+
+    RobotToCameraDisp(0, 3) = pxHE;
+    RobotToCameraDisp(1, 3) = pyHE;
+    RobotToCameraDisp(2, 3) = pzHE;
+
+    // RobotToCameraDispInv = RobotToCameraDisp.inverse();
+
+    CameraToReference = RobotToCameraDisp.inverse() * RobotToReference;
+    std::cout << "CAMMM:" << std::endl;
+    cout << "Cameratorefpx=" << CameraToReference(0, 3) << endl;
+    cout << "Cameratorefpx=" << CameraToReference(1, 3) << endl;
+    cout << "Cameratorefpx=" << CameraToReference(2, 3) << endl;
+    if(clustered_corrs[main_instance].size() > minimum_corresp_val)
+    {
+        instance_found = true;
+
+        Eigen::Matrix4f OriginToObject = Eigen::Matrix4f::Identity();
+        Eigen::Matrix4f ObjectToOriginICP = Eigen::Matrix4f::Identity();
+
+        OriginToObject.block<3, 3>(0, 0) = rototranslations[main_instance].block<3, 3>(0, 0);
+        OriginToObject.block<3, 1>(0, 3) = rototranslations[main_instance].block<3, 1>(0, 3);
+
+        ObjectToOriginICP.block<3, 3>(0, 0) = ICPrototranslation.block<3, 3>(0, 0);
+        ObjectToOriginICP.block<3, 1>(0, 3) = ICPrototranslation.block<3, 1>(0, 3);
+
+        FinalDisplacement = RobotToCameraDisp * ((ObjectToOriginICP * OriginToObject) * CameraToReference);
+
+        std::cout << "*----------------*" << std::endl;
+        std::cout << "Final Displacement matrix for robot:" << std::endl;
+        // Print the rotation matrix and translation vector
+        {
+            Eigen::Matrix3f rotation = FinalDisplacement.block<3, 3>(0, 0);
+            Eigen::Vector3f translation = FinalDisplacement.block<3, 1>(0, 3);
+
+            printf("\n");
+            printf("            | %6.3f %6.3f %6.3f | \n", rotation(0, 0), rotation(0, 1), rotation(0, 2));
+            printf("        R = | %6.3f %6.3f %6.3f | \n", rotation(1, 0), rotation(1, 1), rotation(1, 2));
+            printf("            | %6.3f %6.3f %6.3f | \n", rotation(2, 0), rotation(2, 1), rotation(2, 2));
+            printf("\n");
+            printf("        t = < %0.3f, %0.3f, %0.3f >\n", translation(0), translation(1), translation(2));
+        }
+    }
+    else
+    {
+        FinalDisplacement = Eigen::Matrix4f::Identity();
+        return (Eigen::Matrix4f::Identity());
+    }
+
+    pcl::visualization::PCLVisualizer viewer("Final Cloud");
+    /*viewer.addPointCloud(scene, "scene_cloud");*/
+    viewer.addCoordinateSystem();
+    std::cout << "*----------------*" << std::endl;
+    cout << "Showing Clouds:" << endl;
+    cout << "Red: Base model" << endl;
+    cout << "Green: Model rotated with transformation matrix from Hough algorithm" << endl;
+    cout << "Purple: Model with ICP correction in addition to Hough algorithm transform" << endl;
+    cout << "Orange: Scene" << endl;
+    for(std::size_t i = 0; i < 1; ++i)
+    {
+        pcl::PointCloud<PointType>::Ptr rotated_model1(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointType>::Ptr rotated_model2(new pcl::PointCloud<PointType>());
+        pcl::PointCloud<PointType>::Ptr rotated_model3(new pcl::PointCloud<PointType>());
+        pcl::transformPointCloud(*model, *rotated_model1, rototranslations[main_instance]);
+        *rotated_model2 = *model;
+        pcl::transformPointCloud(*model, *rotated_model3, ICPrototranslation * rototranslations[main_instance]);
+        std::stringstream ss_cloud;
+        std::stringstream ss_cloud1;
+        std::stringstream ss_cloud2;
+        std::stringstream ss_cloud3;
+        std::stringstream ss_cloud4;
+        ss_cloud << "instance" << 1;
+        ss_cloud1 << "instance" << 2;
+        ss_cloud2 << "instance" << 3;
+        ss_cloud3 << "instance" << 4;
+        ss_cloud4 << "instance" << 5;
+        pcl::visualization::PointCloudColorHandlerCustom<PointType> rotated_model_color_handler(rotated_model1,
+                                                                                                0,
+                                                                                                255,
+                                                                                                0);
+        pcl::visualization::PointCloudColorHandlerCustom<PointType> rotated_model_color_handler2(rotated_model2,
+                                                                                                 255,
+                                                                                                 0,
+                                                                                                 0);
+        pcl::visualization::PointCloudColorHandlerCustom<PointType> rotated_model_color_handler3(registered, 0, 0, 255);
+        pcl::visualization::PointCloudColorHandlerCustom<PointType> rotated_model_color_handler4(rotated_model3,
+                                                                                                 128,
+                                                                                                 0,
+                                                                                                 128);
+        pcl::visualization::PointCloudColorHandlerCustom<PointType> scene_color_handler5(sceneorigin, 255, 165, 0);
+
+        // viewer.addCoordinateSystem(1.0);
+
+        viewer.addPointCloud(rotated_model1,
+                             rotated_model_color_handler,
+                             ss_cloud.str()); // rotacija bez icp, zelena boja
+        // viewer.addPointCloud(rotated_model2, rotated_model_color_handler2, ss_cloud1.str()); // osnovni objekt,crvena
+        // viewer.addPointCloud(registered, rotated_model_color_handler3, ss_cloud2.str());//rotacija s icp,plava
+        viewer.addPointCloud(rotated_model3,
+                             rotated_model_color_handler4,
+                             ss_cloud3.str()); // rotacija s icp, izracunato,ljubicasta
+        // viewer.addPointCloud(registered, scene_color_handler5, ss_cloud4.str()); // scena, narandzasto
+        viewer.addPointCloud(sceneorigin, scene_color_handler5, ss_cloud4.str()); // scena, narandzasto
+    }
+
+    while(!viewer.wasStopped())
+    {
+        viewer.registerPointPickingCallback(pointPickingEventOccurred, (void *)&viewer);
+        viewer.spinOnce();
+    }
+    return (FinalDisplacement);
+}
+void pointPickingEventOccurred(const pcl::visualization::PointPickingEvent &event, void *viewer_void)
+{
+    std::cout << "[INOF] Point picking event occurred." << std::endl;
+
+    float x, y, z;
+    if(event.getPointIndex() == -1)
+    {
+        return;
+    }
+    event.getPoint(x, y, z);
+    std::cout << "[INOF] Point coordinate ( " << x << ", " << y << ", " << z << ")" << std::endl;
+}
+int SOR_Filter(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud, int MeanK)
+{
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+    std::cerr << "Cloud before filtering: " << std::endl;
+    std::cerr << *cloud << std::endl;
+    pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+    sor.setInputCloud(cloud);
+    sor.setMeanK(15);
+    sor.setStddevMulThresh(1.0);
+    sor.filter(*cloud);
+
+    return (0);
+}
+int SOR_Filter(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &cloud, int MeanK)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZRGB>);
+
+    pcl::StatisticalOutlierRemoval<pcl::PointXYZRGB> sor;
+    sor.setInputCloud(cloud);
+    sor.setMeanK(30);
+    sor.setStddevMulThresh(0.4);
+    sor.filter(*cloud);
+
+    return (0);
+}
+
+void SavePCDFile(std::string FileName, pcl::PointCloud<pcl::PointXYZRGB> const &object)
+{
+    pcl::io::savePCDFileASCII(FileName, object);
+    std::cerr << "Saved " << object.size() << " data points to " << FileName << std::endl;
+}
+
+void SavePCDFile(std::string FileName, pcl::PointCloud<pcl::PointXYZ> const &object)
+{
+    pcl::io::savePCDFileASCII(FileName, object);
+    std::cerr << "Saved " << object.size() << " data points to " << FileName << std::endl;
+}
+pcl::PointCloud<pcl::PointXYZ> LoadPCDFileUser(std::string FileName)
+{
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::io::loadPCDFile<pcl::PointXYZ>(FileName, *cloud);
+    if(pcl::io::loadPCDFile<pcl::PointXYZ>("test_pcd.pcd", *cloud) == -1) //* load the file
+    {
+        PCL_ERROR("Couldn't read file test_pcd.pcd \n");
+        return (*cloud);
+    }
+    return *cloud;
+}
+pcl::PointCloud<pcl::PointXYZRGB> LoadPCDFileUserRGB(std::string FileName)
+{
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::io::loadPCDFile<pcl::PointXYZRGB>(FileName, *cloud);
+    return *cloud;
+}
+int ZividCalib()
+{
+    try
+    {
+        Zivid::Application zivid;
+
+        std::cout << "Connecting to camera" << std::endl;
+        auto camera{ zivid.connectCamera() };
+
+        size_t currPoseId{ 0 };
+        bool calibrate{ false };
+        std::vector<Zivid::Calibration::HandEyeInput> input;
+        do
+        {
+            switch(enterCommand())
+            {
+                case CommandType::cmdAddPose:
+                {
+                    try
+                    {
+                        const auto robotPose = enterRobotPose(currPoseId);
+
+                        const auto frame = assistedCapture(camera);
+
+                        std::cout << "Detecting checkerboard in point cloud" << std::endl;
+                        const auto result = Zivid::Calibration::detectFeaturePoints(frame.pointCloud());
+                        if(result)
+                        {
+                            std::cout << "OK" << std::endl;
+                            input.emplace_back(Zivid::Calibration::HandEyeInput{ robotPose, result });
+                            currPoseId++;
+                        }
+                        else
+                        {
+                            std::cout << "FAILED" << std::endl;
+                        }
+                    }
+                    catch(const std::exception &e)
+                    {
+                        std::cout << "Error: " << Zivid::toString(e) << std::endl;
+                        continue;
+                    }
+                    break;
+                }
+                case CommandType::cmdCalibrate:
+                {
+                    calibrate = true;
+                    break;
+                }
+                case CommandType::cmdUnknown:
+                {
+                    std::cout << "Error: Unknown command" << std::endl;
+                    break;
+                }
+            }
+        } while(!calibrate);
+
+        const auto calibrationResult{ performCalibration(input) };
+
+        if(calibrationResult.valid())
+        {
+            std::cout << "Hand-eye calibration OK\n"
+                      << "Result:\n"
+                      << calibrationResult << std::endl;
+        }
+        else
+        {
+            std::cout << "Hand-eye calibration FAILED" << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+    catch(const std::exception &e)
+    {
+        std::cerr << "\nError: " << Zivid::toString(e) << std::endl;
+        std::cout << "Press enter to exit." << std::endl;
+        std::cin.get();
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
+
+int FindObject(std::string ObjectPath, Eigen::Matrix4f &FinalDisplacement)
+{
+    std::string ScenaP;
+    std::string AnswerP;
+    float PlaneRange = 4;
+    bool ViewOn = false;
+    float NearestNeighbourSOR = 15;
+    std::cout << "*----------------*" << std::endl;
+    cout << "New paramaters?" << endl;
+    cin >> AnswerP;
+    if(AnswerP == "Yes")
+    {
+        //
+        cout << "Input paramaters:" << endl;
+        cout << endl
+             << "model_ss_ "
+             << "sada:" << model_ss_ << endl;
+        cin >> model_ss_;
+        cout << endl
+             << "scene_ss_ "
+             << "sada:" << scene_ss_ << endl;
+        cin >> scene_ss_;
+        cout << endl
+             << "rf_rad_ "
+             << "sada:" << rf_rad_ << endl;
+        cin >> rf_rad_;
+        cout << endl
+             << "descr_rad_ "
+             << "sada:" << descr_rad_ << endl;
+        cin >> descr_rad_;
+        cout << endl
+             << "cg_size_ "
+             << "sada:" << cg_size_ << endl;
+        cin >> cg_size_;
+        cout << endl
+             << "cg_thresh_ "
+             << "sada:" << cg_thresh_ << endl;
+        cin >> cg_thresh_;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr modelcopy(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr scenecopy(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr sceneorigin(new pcl::PointCloud<pcl::PointXYZ>);
+
+    enum Overloads
+    {
+        overload = 1
+    };
+
+    if(pcl::io::loadPCDFile(ObjectPath, *modelcopy) < 0)
+    {
+        std::cout << "***Error loading model cloud***." << std::endl;
+        // showHelp(argv[0]);
+        return (-1);
+    }
+    CaptureFrameToPcl(sceneorigin);
+    std::cout << "*----------------*" << std::endl;
+    std::cout << "***Point Cloud Capture Finished***" << std::endl;
+    pcl::copyPointCloud(*sceneorigin, *scenecopy);
+
+    scenecopy = SceneCutFilter(scenecopy, -180, 190, -185, 83, 650, 980, 0);
+    // sceneorigin = SceneCutFilter(sceneorigin, -350, 350, -207, 226, 500, 1200, 0);
+    // std::cout << "*----------------*" << std::endl;
+    // cout << "***Scene origin to XYZ Box(PassThrough)***" << endl;
+    // Visualize(sceneorigin);
+    std::cout << "*----------------*" << std::endl;
+    cout << "***Scene cut to XYZ Box(PassThrough)***" << endl;
+    std::cout << "Showing scene after PassThrough Filter" << std::endl;
+    if(ViewOn)
+    {
+        Visualize(scenecopy);
+    }
+    cout << "Size of model cloud:" << modelcopy->size() << " points" << endl;
+    std::cout << "Showing reference model" << std::endl;
+    if(ViewOn)
+    {
+        Visualize(modelcopy);
+    }
+
+    std::cout << "*----------------*" << std::endl;
+    PlaneSegmentation(scenecopy, PlaneRange);
+    cout << "***Plane Segmentation of scene Finished***" << endl;
+    std::cout << "Showing scene after PlaneSegmentation Filter with range of " << PlaneRange << " mm" << std::endl;
+    if(ViewOn)
+    {
+        Visualize(scenecopy);
+    }
+
+    std::cout << "*----------------*" << std::endl;
+    SOR_Filter(scenecopy, NearestNeighbourSOR);
+    cout << "***Statistical Outlier Removal from scene Finished***" << endl;
+    std::cout << "Showing scene after Statistical Outlier Removal" << std::endl;
+    if(ViewOn)
+    {
+        Visualize(scenecopy);
+    }
+ 
+
+    FinalDisplacement = Localization(modelcopy, scenecopy, sceneorigin, overload);
+    if(FinalDisplacement == Eigen::Matrix4f::Identity())
+    {
+        std::cout << "*----------------*" << std::endl;
+        cout << endl << "no Correlation Found" << endl;
+        return (1);
+    }
+    std::cout << "*----------------*" << std::endl;
+    cout << endl << "Correlation Found" << endl;
+
+    return (0);
+}
+
+int MainLoop()
+{
+    while(1)
+    {
+        Eigen::Matrix4f FinalDisplacement = Eigen::Matrix4f::Identity();
+
+        std::vector<double> FinalVectors;
+        std::string InString;
+        if(true) ////TCPClientReceive() == 1
+        {
+            FindObject("C:/Users/CRTA/Desktop/MarkoCutura/zividslike/Extracted/ReferentniObjekt2.pcd",
+                       FinalDisplacement);
+            if(FinalDisplacement != Eigen::Matrix4f::Identity())
+            {
+                nx = (double)FinalDisplacement(0, 0);
+                ny = (double)FinalDisplacement(1, 0);
+                nz = (double)FinalDisplacement(2, 0);
+
+                ox = (double)FinalDisplacement(0, 1);
+                oy = (double)FinalDisplacement(1, 1);
+                oz = (double)FinalDisplacement(2, 1);
+
+                ax = (double)FinalDisplacement(0, 2);
+                ay = (double)FinalDisplacement(1, 2);
+                az = (double)FinalDisplacement(2, 2);
+
+                px = (double)FinalDisplacement(0, 3);
+                py = (double)FinalDisplacement(1, 3);
+                pz = (double)FinalDisplacement(2, 3);
+
+                FinalVectors.push_back(nx);
+                FinalVectors.push_back(ox);
+                FinalVectors.push_back(ax);
+                FinalVectors.push_back(px);
+
+                FinalVectors.push_back(ny);
+                FinalVectors.push_back(oy);
+                FinalVectors.push_back(ay);
+                FinalVectors.push_back(py);
+
+                FinalVectors.push_back(nz);
+                FinalVectors.push_back(oz);
+                FinalVectors.push_back(az);
+                FinalVectors.push_back(pz);
+                std::cout << "*----------------*" << std::endl;
+                std::cout << endl << "Final Displacement Matrix to be parsed to robot:" << endl;
+                for(int i = 0; i < FinalVectors.size(); i++)
+                    std::cout << FinalVectors[i] << endl;
+                std::cout << "*----------------*" << std::endl;
+                std::cout << "Approve ?" << endl;
+                std::cin >> InString;
+                std::cout << endl;
+                if(InString == "yes")
+                {
+                    TCPClient("POS_TRANSFER_"
+                              + DataParser(nx, ox, ax, px * 1000, ny, oy, ay, py * 1000, nz, oz, az, pz * 1000));
+                }
+                else if(InString != "yes")
+                {
+                    std::cout << "*----------------*" << std::endl;
+                    cout << endl << "-------------Skip iteration-------------" << endl;
+                    continue;
+                }
+            }
+            else
+            {
+                std::cout << "*----------------*" << std::endl;
+                std::cout << endl
+                          << "No Correlation Found, Type 'retry' to try again or 'quit' to exit program" << endl;
+                std::string Answer;
+                cin >> Answer;
+                if(Answer == "retry")
+                {
+                    continue;
+                }
+                else if(Answer == "quit")
+                {
+                    std::cout << "*----------------*" << std::endl;
+                    cout << endl << "-------------Program Exit-------------" << endl;
+                    return (0);
+                }
+                else
+                {
+                    return (1);
+                }
+            }
+        }
+    }
+    return (0);
+}
